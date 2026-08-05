@@ -431,12 +431,12 @@
         <a href="#shareSection"><span>👥</span><span>分享</span></a>
     </nav>
 
-    <!-- CloudBase SDK：腾讯云CDN优先，异步不阻塞 -->
+    <!-- CloudBase SDK -->
+    <script src="https://web.sdk.qcloud.com/cloudbase-js-sdk/latest/cloudbase.full.js"></script>
     <script>
         const CLOUDBASE_ENV = 'leoderyyang-d9gc0pfwpbdac9915';
         const USE_CLOUDBASE = true;
         let sdkReady = false;
-        let sdkEverLoaded = false;
         window._cloudbaseReady = false;
 
         function updateSdkStatus(text, color) {
@@ -444,41 +444,27 @@
             if (st) { st.textContent = text; if (color) st.style.color = color; }
         }
 
-        function onSdkReady() {
-            sdkReady = true; sdkEverLoaded = true;
+        // 检查 SDK 是否就绪
+        if (typeof window.cloudbase !== 'undefined') {
+            sdkReady = true;
             window._cloudbaseReady = true;
-            updateSdkStatus('✅ 云端已连接，可创建/加入家庭', '#275b48');
-            // 通知全局
-            if (window._onCloudbaseReady) window._onCloudbaseReady();
+            document.addEventListener('DOMContentLoaded', function() {
+                updateSdkStatus('✅ 云端就绪', '#275b48');
+            });
+        } else {
+            document.addEventListener('DOMContentLoaded', function() {
+                updateSdkStatus('⏳ 加载SDK...', '#c68c38');
+            });
+            window.addEventListener('load', function() {
+                if (typeof window.cloudbase !== 'undefined') {
+                    sdkReady = true;
+                    window._cloudbaseReady = true;
+                    updateSdkStatus('✅ 云端就绪', '#275b48');
+                } else {
+                    updateSdkStatus('⚠️ SDK加载失败，使用本地模式', '#c7624d');
+                }
+            });
         }
-
-        updateSdkStatus('⏳ 正在连接云端...', '#c68c38');
-
-        (function loadSDK() {
-            var s = document.createElement('script');
-            // 腾讯云 CDN（国内快），超时 8 秒
-            s.src = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
-            s.async = true;
-            var loaded = false;
-            function tryDone() { if (!loaded) { loaded = true; onSdkReady(); } }
-            s.onload = tryDone;
-            s.onerror = function() {
-                console.warn('CDN 失败，尝试本地...');
-                var s2 = document.createElement('script');
-                s2.src = 'cloudbase.full.js';
-                s2.async = true;
-                s2.onload = tryDone;
-                s2.onerror = function() {
-                    updateSdkStatus('⚠️ 云端暂不可用（可先用本地模式，稍后重新登录）', '#c7624d');
-                };
-                document.head.appendChild(s2);
-            };
-            // 超时保护
-            setTimeout(function() {
-                if (!loaded) updateSdkStatus('⏳ 云端连接较慢，可先点跳过登录使用本地模式', '#c68c38');
-            }, 5000);
-            document.head.appendChild(s);
-        })();
     </script>
     <script>
         (() => {
@@ -531,46 +517,26 @@
             }
             async function getCloudApp() {
                 if (cloudApp) return cloudApp;
-                // 如果 SDK 还没加载完，等待最多 15 秒
-                if (!window.cloudbase && !sdkReady) {
-                    updateSdkStatus('⏳ 云端正在连接，请稍候...', '#c68c38');
-                    await new Promise((resolve, reject) => {
-                        var start = Date.now();
-                        var check = setInterval(() => {
-                            if (window.cloudbase || sdkReady) { clearInterval(check); resolve(); }
-                            else if (Date.now() - start > 15000) { clearInterval(check); reject(new Error('云端连接超时，请点"跳过登录"使用本地模式')); }
-                        }, 300);
-                    });
-                }
-                if (!window.cloudbase) throw new Error('云端服务暂不可用，请点「跳过登录」使用本地模式，或稍后重试');
+                if (!window.cloudbase) throw new Error('CloudBase SDK 未加载，请刷新重试');
                 cloudApp = window.cloudbase.init({ env: CLOUDBASE_ENV });
+                // 设置持久化
+                try { cloudApp.auth({ persistence: 'local' }); } catch(e) {}
                 cloudDb = cloudApp.database();
-                updateSdkStatus('✅ 云端已连接', '#275b48');
                 return cloudApp;
             }
             async function cloudSignIn() {
-                // 先尝试本地用户
-                const localUid = localStorage.getItem('family-finance-local-uid');
-                if (!USE_CLOUDBASE) {
-                    const uid = localUid || ('local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
-                    if (!localUid) localStorage.setItem('family-finance-local-uid', uid);
-                    return { uid, isAnonymous: true, localFallback: true };
-                }
-                // 尝试 CloudBase 匿名登录
-                try {
-                    const app = await getCloudApp();
-                    await app.auth().signInAnonymously();
-                    const uid = app.auth().currentUser?.uid || ('cb-' + Date.now());
+                const app = await getCloudApp();
+                // 匿名登录
+                const loginState = await app.auth().getLoginState();
+                if (loginState) {
                     updateSdkStatus('✅ 云端已连接', '#275b48');
-                    return { uid, isAnonymous: true };
-                } catch (e) {
-                    console.warn('CloudBase 登录失败，降级为本地模式:', e.message || e);
-                    updateSdkStatus('⚠️ 云端登录未开启，使用本地模式（数据存本设备）', '#c68c38');
-                    // 自动切换到本地模式
-                    const uid = localUid || ('local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
-                    if (!localUid) localStorage.setItem('family-finance-local-uid', uid);
-                    return { uid, isAnonymous: true, localFallback: true };
+                    return { uid: loginState.user.uid, isAnonymous: true };
                 }
+                await app.auth().signInAnonymously();
+                const loginState2 = await app.auth().getLoginState();
+                const uid = loginState2?.user?.uid || ('cb-' + Date.now());
+                updateSdkStatus('✅ 云端已连接', '#275b48');
+                return { uid, isAnonymous: true };
             }
             async function cloudSave() {
                 if (!cloudUser || !cloudFamilyId) return;
@@ -644,94 +610,81 @@
                 const mode = document.getElementById('authMode').value;
                 const name = document.getElementById('authName').value.trim();
                 if (!name) throw new Error('请填写你的称呼');
-                // 1) 登录（匿名）
-                const sign = await cloudSignIn();
-                cloudUser = { uid: sign.uid };
-                // 2) 根据模式处理
-                if (!USE_CLOUDBASE) {
-                    // 本地演示模式：直接进入"本地家庭"
-                    if (!state.cloudFamilyId) {
-                        cloudFamilyId = 'local-' + sign.uid;
-                        cloudInviteCode = genInviteCode();
-                        members = [{ id: sign.uid, name, role: 'admin', joinedAt: Date.now() }];
-                    } else {
-                        cloudFamilyId = state.cloudFamilyId;
-                        cloudInviteCode = state.cloudInviteCode || genInviteCode();
+
+                // 尝试 CloudBase 云端模式
+                if (USE_CLOUDBASE && window.cloudbase) {
+                    try {
+                        const sign = await cloudSignIn();
+                        cloudUser = { uid: sign.uid };
+                        if (!sign.localFallback) {
+                            const db = (await getCloudApp()).database();
+                            if (mode === 'create') {
+                                const familyName = document.getElementById('familyName').value.trim() || `${name}的家庭`;
+                                let code, exists = true, tries = 0;
+                                while (exists && tries < 5) {
+                                    code = genInviteCode();
+                                    const check = await db.collection('families').where({ inviteCode: code }).count();
+                                    exists = (check.total || 0) > 0;
+                                    tries++;
+                                }
+                                if (exists) throw new Error('生成邀请码失败，请重试');
+                                const oldMem = await db.collection('family_members').where({ userId: sign.uid }).get();
+                                if (oldMem.data && oldMem.data.length) {
+                                    cloudFamilyId = oldMem.data[0].familyId;
+                                    await loadCloudFamily();
+                                    return;
+                                }
+                                const addRes = await db.collection('families').add({
+                                    name: familyName, inviteCode: code, createdBy: sign.uid, createdAt: Date.now()
+                                });
+                                cloudFamilyId = addRes.id;
+                                cloudInviteCode = code;
+                                await db.collection('family_members').add({
+                                    familyId: cloudFamilyId, userId: sign.uid, displayName: name, role: 'admin', joinedAt: Date.now()
+                                });
+                                await db.collection('family_snapshots').add({
+                                    familyId: cloudFamilyId, payload: { month: monthInput.value, data: {} }, updatedBy: sign.uid, updatedAt: Date.now()
+                                });
+                            } else if (mode === 'join') {
+                                const code = document.getElementById('joinCode').value.trim().toUpperCase();
+                                if (!code || code.length !== 6) throw new Error('邀请码必须是 6 位');
+                                const find = await db.collection('families').where({ inviteCode: code }).get();
+                                if (!find.data || !find.data.length) throw new Error('邀请码无效');
+                                const family = find.data[0];
+                                const oldMem = await db.collection('family_members').where({ userId: sign.uid, familyId: family._id }).get();
+                                if (oldMem.data && oldMem.data.length) {
+                                    cloudFamilyId = family._id;
+                                    cloudInviteCode = family.inviteCode;
+                                    await loadCloudFamily();
+                                    return;
+                                }
+                                await db.collection('family_members').add({
+                                    familyId: family._id, userId: sign.uid, displayName: name, role: 'editor', joinedAt: Date.now()
+                                });
+                                cloudFamilyId = family._id;
+                                cloudInviteCode = family.inviteCode;
+                            }
+                            await loadCloudFamily();
+                            currentUserId = sign.uid;
+                            members = members.length ? members : [{ id: sign.uid, name, role: 'admin', joinedAt: Date.now() }];
+                            saveAuth();
+                            updateSdkStatus('✅ 云端已连接 · 全家同步', '#275b48');
+                            return;
+                        }
+                    } catch (e) {
+                        console.warn('CloudBase 云端模式失败，降级本地:', e.message || e);
                     }
-                    currentUserId = sign.uid;
-                    saveAuth();
-                    document.getElementById('syncStatus').textContent = '本地演示模式：在浏览器控制台填入 CloudBase 环境 ID 后可升级为家庭云端同步';
-                    return;
                 }
-                const db = (await getCloudApp()).database();
-                if (mode === 'create') {
-                    const familyName = document.getElementById('familyName').value.trim() || `${name}的家庭`;
-                    // 找未使用的邀请码（最多试 5 次）
-                    let code, exists = true, tries = 0;
-                    while (exists && tries < 5) {
-                        code = genInviteCode();
-                        const check = await db.collection('families').where({ inviteCode: code }).count();
-                        exists = (check.total || 0) > 0;
-                        tries++;
-                    }
-                    if (exists) throw new Error('生成邀请码失败，请重试');
-                    // 看这个用户是否已经有家庭
-                    const oldMem = await db.collection('family_members').where({ userId: sign.uid }).get();
-                    if (oldMem.data && oldMem.data.length) {
-                        // 已经有家庭了，直接加载（不报错）
-                        cloudFamilyId = oldMem.data[0].familyId;
-                        await loadCloudFamily();
-                        return;
-                    }
-                    const addRes = await db.collection('families').add({
-                        name: familyName,
-                        inviteCode: code,
-                        createdBy: sign.uid,
-                        createdAt: Date.now(),
-                    });
-                    cloudFamilyId = addRes.id;
-                    cloudInviteCode = code;
-                    await db.collection('family_members').add({
-                        familyId: cloudFamilyId,
-                        userId: sign.uid,
-                        displayName: name,
-                        role: 'admin',
-                        joinedAt: Date.now(),
-                    });
-                    // 初始化空快照
-                    await db.collection('family_snapshots').add({
-                        familyId: cloudFamilyId,
-                        payload: { month: monthInput.value, data: {} },
-                        updatedBy: sign.uid,
-                        updatedAt: Date.now(),
-                    });
-                } else if (mode === 'join') {
-                    const code = document.getElementById('joinCode').value.trim().toUpperCase();
-                    if (!code || code.length !== 6) throw new Error('邀请码必须是 6 位');
-                    const find = await db.collection('families').where({ inviteCode: code }).get();
-                    if (!find.data || !find.data.length) throw new Error('邀请码无效，请向家人核对');
-                    const family = find.data[0];
-                    const oldMem = await db.collection('family_members').where({ userId: sign.uid, familyId: family._id }).get();
-                    if (oldMem.data && oldMem.data.length) {
-                        // 已经在这个家庭里了，直接加载
-                        cloudFamilyId = family._id;
-                        cloudInviteCode = family.inviteCode;
-                        await loadCloudFamily();
-                        return;
-                    }
-                    await db.collection('family_members').add({
-                        familyId: family._id,
-                        userId: sign.uid,
-                        displayName: name,
-                        role: 'editor',
-                        joinedAt: Date.now(),
-                    });
-                    cloudFamilyId = family._id;
-                    cloudInviteCode = family.inviteCode;
-                } else if (mode === 'login') {
-                    // 不需要额外操作，loadCloudFamily 会从成员表里找
-                }
-                await loadCloudFamily();
+                // 本地模式兜底
+                const localUid = localStorage.getItem('family-finance-local-uid') || ('local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
+                localStorage.setItem('family-finance-local-uid', localUid);
+                cloudUser = { uid: localUid };
+                currentUserId = localUid;
+                cloudFamilyId = state.cloudFamilyId || ('local-' + localUid);
+                cloudInviteCode = state.cloudInviteCode || genInviteCode();
+                members = [{ id: localUid, name: name, role: 'admin', joinedAt: Date.now() }];
+                saveAuth();
+                updateSdkStatus('📱 本地模式 · 数据保存在本设备', '#c68c38');
             }
             function canEdit() {
                 return ['admin', 'editor'].includes(currentUser()?.role);
