@@ -549,19 +549,28 @@
                 return cloudApp;
             }
             async function cloudSignIn() {
+                // 先尝试本地用户
+                const localUid = localStorage.getItem('family-finance-local-uid');
                 if (!USE_CLOUDBASE) {
-                    // 本地演示模式：用一个伪 uid，所有"云端"功能都退化到本地存储
-                    const localUid = localStorage.getItem('family-finance-local-uid');
-                    if (localUid) return { uid: localUid, isAnonymous: true };
-                    const uid = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
-                    localStorage.setItem('family-finance-local-uid', uid);
-                    return { uid, isAnonymous: true };
+                    const uid = localUid || ('local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
+                    if (!localUid) localStorage.setItem('family-finance-local-uid', uid);
+                    return { uid, isAnonymous: true, localFallback: true };
                 }
-                const app = await getCloudApp();
-                // 匿名登录：不需要微信/邮箱/密码，注册即可用
-                await app.auth().signInAnonymously();
-                const uid = app.auth().currentUser?.uid || ('cb-' + Date.now());
-                return { uid, isAnonymous: true };
+                // 尝试 CloudBase 匿名登录
+                try {
+                    const app = await getCloudApp();
+                    await app.auth().signInAnonymously();
+                    const uid = app.auth().currentUser?.uid || ('cb-' + Date.now());
+                    updateSdkStatus('✅ 云端已连接', '#275b48');
+                    return { uid, isAnonymous: true };
+                } catch (e) {
+                    console.warn('CloudBase 登录失败，降级为本地模式:', e.message || e);
+                    updateSdkStatus('⚠️ 云端登录未开启，使用本地模式（数据存本设备）', '#c68c38');
+                    // 自动切换到本地模式
+                    const uid = localUid || ('local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8));
+                    if (!localUid) localStorage.setItem('family-finance-local-uid', uid);
+                    return { uid, isAnonymous: true, localFallback: true };
+                }
             }
             async function cloudSave() {
                 if (!cloudUser || !cloudFamilyId) return;
