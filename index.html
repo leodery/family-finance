@@ -241,7 +241,10 @@
                 <button class="primary-btn" id="authSubmit" type="submit">创建家庭</button>
                 <button class="ghost-btn" id="authSkip" type="button" style="width:100%;margin-top:4px;">📱 跳过登录，本地使用</button>
             </form>
-            <div class="auth-note" id="authNote">数据保存在腾讯云，国内秒开；家人用同 Wi-Fi 或流量都能实时看到你的修改。</div>
+            <div class="auth-note" id="authNote">
+                <span id="sdkStatus" style="display:block;margin-bottom:4px;font-weight:600;">⏳ 正在连接云端...</span>
+                数据保存在腾讯云，国内秒开；家人扫码或输入邀请码即可加入，多人实时同步记账。
+            </div>
         </div>
     </div>
     <main class="shell" style="display:none;">
@@ -424,45 +427,43 @@
         <a href="#shareSection"><span>👥</span><span>分享</span></a>
     </nav>
 
-    <!-- CloudBase SDK 异步加载（不阻塞页面） -->
+    <!-- CloudBase SDK：腾讯云CDN优先（国内秒开），本地备用 -->
     <script>
-        // ====== CloudBase 环境配置 ======
         const CLOUDBASE_ENV = 'leoderyyang-d9gc0pfwpbdac9915';
         const USE_CLOUDBASE = true;
-        let sdkLoaded = false;
-        let sdkTimeoutId = null;
-        function markSdkReady() { sdkLoaded = true; if (sdkTimeoutId) clearTimeout(sdkTimeoutId); }
+        let sdkReady = false;
+        function onSdkReady() {
+            sdkReady = true;
+            document.getElementById('sdkStatus').textContent = '✅ 云端已连接';
+            document.getElementById('sdkStatus').style.color = '#275b48';
+            // 云端就绪后刷新登录选项
+            if (typeof refreshAuthUI === 'function') refreshAuthUI();
+        }
+        // 提示用户正在连接
+        document.addEventListener('DOMContentLoaded', function() {
+            var st = document.getElementById('sdkStatus');
+            if (st) st.textContent = '⏳ 正在连接云端...';
+        });
 
-        // 异步加载 CloudBase SDK，不阻塞页面渲染
-        (function loadCloudBaseSDK() {
-            var cbScript = document.createElement('script');
-            cbScript.src = 'cloudbase.full.js';
-            cbScript.onload = function() { markSdkReady(); console.log('CloudBase SDK 就绪'); };
-            cbScript.onerror = function() {
-                // 尝试备用 CDN
-                console.warn('主 SDK 加载失败，尝试备用CDN...');
-                var fallback = document.createElement('script');
-                fallback.src = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
-                fallback.onload = function() { markSdkReady(); };
-                fallback.onerror = function() { console.error('CloudBase SDK 全部加载失败'); };
-                document.head.appendChild(fallback);
+        (function loadSDK() {
+            var s = document.createElement('script');
+            // 优先腾讯云 CDN（国内秒开），失败再用本地文件
+            s.src = 'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js';
+            s.onload = function() { onSdkReady(); console.log('CloudBase 就绪 (CDN)'); };
+            s.onerror = function() {
+                console.warn('CDN 加载失败，尝试本地...');
+                var s2 = document.createElement('script');
+                s2.src = 'cloudbase.full.js';
+                s2.onload = function() { onSdkReady(); console.log('CloudBase 就绪 (本地)'); };
+                s2.onerror = function() {
+                    console.error('CloudBase SDK 全部加载失败');
+                    document.getElementById('sdkStatus').textContent = '⚠️ 云端不可用，请使用本地模式';
+                    document.getElementById('sdkStatus').style.color = '#c7624d';
+                };
+                document.head.appendChild(s2);
             };
-            document.head.appendChild(cbScript);
+            document.head.appendChild(s);
         })();
-
-        // 超时保护：5 秒后自动进入本地模式
-        sdkTimeoutId = setTimeout(function() {
-            if (!sdkLoaded && typeof window.cloudbase === 'undefined') {
-                console.warn('CloudBase SDK 加载超时，自动切换本地模式');
-                var note = document.getElementById('authNote');
-                if (note) note.innerHTML = '⚠️ 云端暂不可用，已切换<b>本地模式</b>。数据保存在本设备，导入导出功能正常。';
-                var gate = document.getElementById('authGate');
-                if (gate) gate.classList.add('hidden');
-                var shell = document.querySelector('.shell');
-                if (shell) shell.style.display = 'block';
-                if (typeof window._initLocalFallback === 'function') window._initLocalFallback();
-            }
-        }, 5000);
     </script>
     <script>
         (() => {
