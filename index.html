@@ -1147,7 +1147,13 @@
                     document.getElementById('authForm').reset();
                     finishAuth();
                 } catch (error) {
-                    document.getElementById('authNote').textContent = `操作失败：${error.message || error}`;
+                    var msg = '未知错误';
+                    if (typeof error === 'string') msg = error;
+                    else if (error && error.message) msg = error.message;
+                    else if (error && error.code) msg = error.code + (error.msg ? ': ' + error.msg : '');
+                    else try { msg = JSON.stringify(error); } catch(e) { msg = String(error); }
+                    document.getElementById('authNote').textContent = '操作失败：' + msg;
+                    document.getElementById('authNote').style.color = '#c7624d';
                 } finally {
                     submit.disabled = false;
                 }
