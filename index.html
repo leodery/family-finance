@@ -431,8 +431,7 @@
         <a href="#shareSection"><span>👥</span><span>分享</span></a>
     </nav>
 
-    <!-- CloudBase SDK -->
-    <script src="https://web.sdk.qcloud.com/cloudbase-js-sdk/latest/cloudbase.full.js"></script>
+    <!-- CloudBase SDK：多CDN竞速加载 -->
     <script>
         const CLOUDBASE_ENV = 'leoderyyang-d9gc0pfwpbdac9915';
         const USE_CLOUDBASE = true;
@@ -444,27 +443,46 @@
             if (st) { st.textContent = text; if (color) st.style.color = color; }
         }
 
-        // 检查 SDK 是否就绪
-        if (typeof window.cloudbase !== 'undefined') {
+        function onCloudbaseReady() {
+            if (sdkReady) return;
             sdkReady = true;
             window._cloudbaseReady = true;
-            document.addEventListener('DOMContentLoaded', function() {
-                updateSdkStatus('✅ 云端就绪', '#275b48');
-            });
-        } else {
-            document.addEventListener('DOMContentLoaded', function() {
-                updateSdkStatus('⏳ 加载SDK...', '#c68c38');
-            });
-            window.addEventListener('load', function() {
-                if (typeof window.cloudbase !== 'undefined') {
-                    sdkReady = true;
-                    window._cloudbaseReady = true;
-                    updateSdkStatus('✅ 云端就绪', '#275b48');
-                } else {
-                    updateSdkStatus('⚠️ SDK加载失败，使用本地模式', '#c7624d');
-                }
-            });
+            updateSdkStatus('✅ 云端就绪', '#275b48');
         }
+
+        updateSdkStatus('⏳ 连接云端...', '#c68c38');
+
+        // 多个 CDN 同时尝试，谁先成功用谁
+        var SDK_URLS = [
+            'https://static.cloudbase.net/cloudbase-js-sdk/latest/cloudbase.full.js',
+            'https://web.sdk.qcloud.com/cloudbase-js-sdk/latest/cloudbase.full.js',
+            'https://cdn.jsdelivr.net/npm/@cloudbase/js-sdk@2.0/latest/cloudbase.full.js',
+            'https://cloudcache.tencent-cloud.com/qcloud/cloudbase-js-sdk/latest/cloudbase.full.js',
+        ];
+
+        var loaded = false;
+        SDK_URLS.forEach(function(url) {
+            var s = document.createElement('script');
+            s.src = url;
+            s.async = true;
+            s.onload = function() {
+                if (!loaded && typeof window.cloudbase !== 'undefined') {
+                    loaded = true;
+                    onCloudbaseReady();
+                }
+            };
+            s.onerror = function() {};
+            document.head.appendChild(s);
+            // 超时放弃这个源
+            setTimeout(function() { s.onload = null; s.onerror = null; }, 8000);
+        });
+
+        // 兜底超时：10秒后还没加载成功就用本地模式
+        setTimeout(function() {
+            if (!sdkReady && typeof window.cloudbase === 'undefined') {
+                updateSdkStatus('⚠️ SDK加载失败，使用本地模式', '#c7624d');
+            }
+        }, 10000);
     </script>
     <script>
         (() => {
