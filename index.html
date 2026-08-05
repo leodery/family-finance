@@ -239,11 +239,12 @@
                 <label for="joinCode" id="joinCodeLabel" hidden>家庭邀请码（向家人要 6 位码）</label>
                 <input id="joinCode" placeholder="6 位邀请码，如 A2K9P3" maxlength="6" hidden style="text-transform:uppercase;">
                 <button class="primary-btn" id="authSubmit" type="submit">创建家庭</button>
+                <button class="ghost-btn" id="authSkip" type="button" style="width:100%;margin-top:4px;">📱 跳过登录，本地使用</button>
             </form>
             <div class="auth-note" id="authNote">数据保存在腾讯云，国内秒开；家人用同 Wi-Fi 或流量都能实时看到你的修改。</div>
         </div>
     </div>
-    <main class="shell">
+    <main class="shell" style="display:none;">
         <header class="topbar">
             <div>
                 <div class="eyebrow">家庭财务 · 每月复盘</div>
@@ -348,7 +349,11 @@
                     <div class="sync-status" id="syncStatus">数据只保存在当前浏览器，不会自动上传网络。</div>
                 </section>
                 <section class="card" id="shareSection">
-                    <div class="card-head"><div><h2>家人手机访问</h2><p class="card-note">把下面的地址发给家人，在手机浏览器打开就能用同一份账本。</p></div></div>
+                    <div class="card-head">
+                        <div><h2>家人手机访问</h2><p class="card-note">把下面的地址发给家人，在手机浏览器打开就能用同一份账本。</p></div>
+                        <button class="ghost-btn" id="shareToggleBtn" type="button" style="font-size:12px;">🔗 显示分享网址</button>
+                    </div>
+                    <div id="shareUrlPanel" style="display:none;">
                     <div class="share-url">
                         <input id="shareUrl" aria-label="手机访问地址" value="">
                         <button class="primary-btn" id="copyShareUrlBtn" type="button">复制地址</button>
@@ -360,6 +365,7 @@
                         <div style="font-size:28px; font-weight:800; letter-spacing:6px; color:var(--forest-dark); margin:8px 0;" id="inviteCodeDisplay">——</div>
                         <p style="margin:4px 0 0; color:var(--forest-dark);">让家人在打开页面时选"加入家庭"，填这个 6 位码和自己的称呼即可加入。</p>
                     </div>
+                    </div><!-- end shareUrlPanel -->
                     <div class="share-help">
                         <strong>三种让家人用上的方式</strong>
                         <ol>
@@ -440,6 +446,22 @@
         //   6) 在「数据库」里新建三个集合：families / family_members / family_snapshots
         const CLOUDBASE_ENV = 'leoderyyang-d9gc0pfwpbdac9915';   // 你的 CloudBase 环境 ID
         const USE_CLOUDBASE = true;
+        // SDK 加载超时保护：5 秒未加载自动切换本地模式
+        let sdkLoaded = false;
+        let sdkTimeoutId = null;
+        function markSdkReady() { sdkLoaded = true; if (sdkTimeoutId) clearTimeout(sdkTimeoutId); }
+        // 如果 SDK 定义了则立即标记
+        if (typeof window.cloudbase !== 'undefined') markSdkReady();
+        sdkTimeoutId = setTimeout(() => {
+            if (!sdkLoaded && !window.cloudbase) {
+                console.warn('CloudBase SDK 加载超时，已自动切换为本地模式。数据仅保存在本设备。');
+                document.getElementById('authNote').innerHTML = '⚠️ 云端服务不可用，已切换为<b>本地模式</b>。数据仅保存在本设备浏览器中。导入导出功能正常可用。';
+                document.getElementById('authGate').classList.add('hidden');
+                document.querySelector('.shell').style.display = 'block';
+                // 自动以本地模式初始化
+                if (typeof window._initLocalFallback === 'function') window._initLocalFallback();
+            }
+        }, 6000);
     </script>
     <script>
         (() => {
@@ -760,6 +782,7 @@
             function finishAuth() {
                 document.getElementById('authGate').classList.add('hidden');
                 document.getElementById('authGate').setAttribute('aria-hidden', 'true');
+                document.querySelector('.shell').style.display = 'block';
                 document.body.style.overflow = '';
                 // 显示邀请码
                 if (cloudInviteCode) {
@@ -1132,17 +1155,73 @@
                 if (cloudWatcher) { try { cloudWatcher.close(); } catch {} cloudWatcher = null; }
                 location.reload();
             });
-            monthInput.addEventListener('change', render);
-            document.getElementById('exportBtn').addEventListener('click', () => {
-                const blob = new Blob([JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), data }, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `家庭账本-${monthInput.value}.json`;
-                link.click();
-                URL.revokeObjectURL(url);
-                document.getElementById('syncStatus').textContent = '账本已导出，可以发送给家人导入。';
+            // 跳过登录按钮
+            document.getElementById('authSkip').addEventListener('click', () => {
+                document.getElementById('authGate').classList.add('hidden');
+                document.querySelector('.shell').style.display = 'block';
+                // 创建本地用户
+                const localUid = localStorage.getItem('family-finance-local-uid');
+                if (!localUid) {
+                    const uid = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+                    localStorage.setItem('family-finance-local-uid', uid);
+                }
+                currentUserId = localStorage.getItem('family-finance-local-uid');
+                members = [{ id: currentUserId, name: '我', role: 'admin', joinedAt: Date.now() }];
+                cloudFamilyId = ''; cloudInviteCode = '';
+                saveAuth();
+                refreshUserBar(); render();
+                document.getElementById('shareSection').style.display = 'none';
             });
+            // 本地模式兜底函数
+            window._initLocalFallback = function() {
+                const localUid = localStorage.getItem('family-finance-local-uid');
+                if (!localUid) {
+                    const uid = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+                    localStorage.setItem('family-finance-local-uid', uid);
+                }
+                currentUserId = localStorage.getItem('family-finance-local-uid');
+                members = [{ id: currentUserId, name: '我', role: 'admin', joinedAt: Date.now() }];
+                cloudFamilyId = ''; cloudInviteCode = '';
+                saveAuth();
+                refreshUserBar(); render();
+                document.getElementById('shareSection').style.display = 'none';
+            };
+            // 分享网址折叠切换
+            document.getElementById('shareToggleBtn').addEventListener('click', () => {
+                const panel = document.getElementById('shareUrlPanel');
+                const btn = document.getElementById('shareToggleBtn');
+                if (panel.style.display === 'none') {
+                    panel.style.display = 'block';
+                    btn.textContent = '🔒 隐藏网址';
+                } else {
+                    panel.style.display = 'none';
+                    btn.textContent = '🔗 显示分享网址';
+                }
+            });
+            monthInput.addEventListener('change', render);
+            // 导出（移动端兼容）
+            document.getElementById('exportBtn').addEventListener('click', () => {
+                const jsonStr = JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), data }, null, 2);
+                const blob = new Blob([jsonStr], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const filename = `家庭账本-${monthInput.value}.json`;
+                // 尝试原生分享 API
+                if (navigator.share && navigator.canShare) {
+                    const fileObj = new File([blob], filename, { type: 'application/json' });
+                    if (navigator.canShare({ files: [fileObj] })) {
+                        navigator.share({ files: [fileObj], title: '家庭账本导出' }).catch(() => {});
+                    } else {
+                        const link = document.createElement('a');
+                        link.href = url; link.download = filename; link.click();
+                    }
+                } else {
+                    const link = document.createElement('a');
+                    link.href = url; link.download = filename; link.click();
+                }
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                document.getElementById('syncStatus').textContent = '✅ 账本已导出，可以发送给家人导入。';
+            });
+            // 导入（移动端兼容）
             document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
             document.getElementById('importFile').addEventListener('change', async event => {
                 const file = event.target.files[0];
